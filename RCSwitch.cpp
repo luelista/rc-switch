@@ -73,12 +73,13 @@ static const RCSwitch::Protocol proto[] = {
 #else
 static const RCSwitch::Protocol PROGMEM proto[] = {
 #endif
-  { 350, {  1, 31 }, {  1,  3 }, {  3,  1 }, false },    // protocol 1
-  { 650, {  1, 10 }, {  1,  2 }, {  2,  1 }, false },    // protocol 2
-  { 100, { 30, 71 }, {  4, 11 }, {  9,  6 }, false },    // protocol 3
-  { 380, {  1,  6 }, {  1,  3 }, {  3,  1 }, false },    // protocol 4
-  { 500, {  6, 14 }, {  1,  2 }, {  2,  1 }, false },    // protocol 5
-  { 450, { 23,  1 }, {  1,  2 }, {  2,  1 }, true }      // protocol 6 (HT6P20B)
+  { 350, {  1, 31 }, {  1,  3 }, {  3,  1 }, 1, 0, false },    // protocol 1
+  { 650, {  1, 10 }, {  1,  2 }, {  2,  1 }, 1, 0, false },    // protocol 2
+  { 100, { 30, 71 }, {  4, 11 }, {  9,  6 }, 1, 0, false },    // protocol 3
+  { 380, {  1,  6 }, {  1,  3 }, {  3,  1 }, 1, 0, false },    // protocol 4
+  { 500, {  6, 14 }, {  1,  2 }, {  2,  1 }, 1, 0, false },    // protocol 5
+  { 450, { 23,  1 }, {  1,  2 }, {  2,  1 }, 2, 0, false },     // protocol 6 (HT6P20B)
+  { 275, {  1, 10 }, {  1,  1 }, {  1,  5 }, 3, 2, true },    // protocol 7
 };
 
 enum {
@@ -86,16 +87,16 @@ enum {
 };
 
 #if not defined( RCSwitchDisableReceiving )
-unsigned long RCSwitch::nReceivedValue = 0;
-unsigned int RCSwitch::nReceivedBitlength = 0;
-unsigned int RCSwitch::nReceivedDelay = 0;
-unsigned int RCSwitch::nReceivedProtocol = 0;
-int RCSwitch::nReceiveTolerance = 60;
 const unsigned int RCSwitch::nSeparationLimit = 4600;
+volatile bit_value_t RCSwitch::nReceivedValue = 0;
+volatile unsigned int RCSwitch::nReceivedBitlength = 0;
+volatile unsigned int RCSwitch::nReceivedDelay = 0;
+volatile unsigned int RCSwitch::nReceivedProtocol = 0;
+volatile int RCSwitch::nReceiveTolerance = 60;
 // separationLimit: minimum microseconds between received codes, closer codes are ignored.
 // according to discussion on issue #14 it might be more suitable to set the separation
 // limit to the same time as the 'low' part of the sync signal for the current protocol.
-unsigned int RCSwitch::timings[RCSWITCH_MAX_CHANGES];
+volatile unsigned int RCSwitch::timings[RCSWITCH_MAX_CHANGES];
 #endif
 
 RCSwitch::RCSwitch() {
@@ -286,6 +287,27 @@ void RCSwitch::switchOff(const char* sGroup, const char* sDevice) {
   this->sendTriState( this->getCodeWordA(sGroup, sDevice, false) );
 }
 
+/**
+* Switch a remote switch on (Type Intertechno self-learning)
+*
+* @param remote  unique 26bit code of the remote control
+  @param allSwitches  apply command to all switches of the remote at once
+* @param nSwitchNumber  Number of switch button pair (1..16)
+*/
+void RCSwitch::switchOn(int remote, bool allSwitches, int nSwitchNumber) {
+  this->send(this->getCodeWordE(remote, allSwitches, nSwitchNumber, true));
+}
+
+/**
+* Switch a remote switch off (Type Intertechno self-learning)
+*
+* @param remote  unique 26bit code of the remote control
+* @param allSwitches  apply command to all switches of the remote at once
+* @param nSwitchNumber  Number of switch button pair (1..16)
+*/
+void RCSwitch::switchOff(int remote, bool allSwitches, int nSwitchNumber) {
+  this->send(this->getCodeWordE(remote, allSwitches, nSwitchNumber, false));
+}
 
 /**
  * Returns a char[13], representing the code word to be send.
@@ -436,11 +458,58 @@ char* RCSwitch::getCodeWordD(char sGroup, int nDevice, bool bStatus) {
 }
 
 /**
+* Encoding for Intertechno self-learning switch type
+* Protocol info found at https://www.sweetpi.de/blog/329/ein-ueberblick-ueber-433mhz-funksteckdosen-und-deren-protokolle
+* Tested with ITLS-16 remote control and ITLR-3500 socket adapter. The allSwitches flag seems to have no effect in this combo.
+*
+* @param remote  unique 26bit code of the remote control
+* @param allSwitches  apply command to all switches of the remote at once
+* @param nSwitchNumber  Number of switch button pair (1..16)
+* @param bStatus       Whether to switch on (true) or off (false)
+*
+* @return char[65], representing a binary code word of length 64
+*/
+char* RCSwitch::getCodeWordE(int remote, bool allSwitches, int nSwitchNumber, bool bStatus) {
+  static char sReturn[65];
+  int nReturnPos = 0;
+
+  for (int i = 25; i >= 0; i--) {
+    if (remote & (1 << i)) {
+      sReturn[nReturnPos++] = '1';
+      sReturn[nReturnPos++] = '0';
+    } else {
+      sReturn[nReturnPos++] = '0';
+      sReturn[nReturnPos++] = '1';
+    }
+  }
+  sReturn[nReturnPos++] = allSwitches ? '1' : '0';
+  sReturn[nReturnPos++] = allSwitches ? '0' : '1';
+  if (bStatus) {
+    sReturn[nReturnPos++] = '1';
+    sReturn[nReturnPos++] = '0';
+  } else {
+    sReturn[nReturnPos++] = '0';
+    sReturn[nReturnPos++] = '1';
+  }
+  for  (int i = 3; i >= 0; i--) {
+    if (nSwitchNumber & (1 << i)) {
+      sReturn[nReturnPos++] = '1';
+      sReturn[nReturnPos++] = '0';
+    } else {
+      sReturn[nReturnPos++] = '0';
+      sReturn[nReturnPos++] = '1';
+    }
+  }
+  sReturn[nReturnPos] = '\0';
+  return sReturn;
+}
+
+/**
  * @param sCodeWord   a tristate code word consisting of the letter 0, 1, F
  */
 void RCSwitch::sendTriState(const char* sCodeWord) {
   // turn the tristate code word into the corresponding bit pattern, then send it
-  unsigned long code = 0;
+  bit_value_t code = 0;
   unsigned int length = 0;
   for (const char* p = sCodeWord; *p; p++) {
     code <<= 2L;
@@ -466,16 +535,38 @@ void RCSwitch::sendTriState(const char* sCodeWord) {
  * @param sCodeWord   a binary code word consisting of the letter 0, 1
  */
 void RCSwitch::send(const char* sCodeWord) {
-  // turn the tristate code word into the corresponding bit pattern, then send it
-  unsigned long code = 0;
-  unsigned int length = 0;
-  for (const char* p = sCodeWord; *p; p++) {
-    code <<= 1L;
-    if (*p != '0')
-      code |= 1L;
-    length++;
+  // turn the binary code word into the corresponding bit pattern, then send it
+  if (this->nTransmitterPin == -1)
+    return;
+
+#if not defined( RCSwitchDisableReceiving )
+  // make sure the receiver is disabled while we transmit
+  int nReceiverInterrupt_backup = nReceiverInterrupt;
+  if (nReceiverInterrupt_backup != -1) {
+    this->disableReceive();
   }
-  this->send(code, length);
+#endif
+
+  for (int nRepeat = 0; nRepeat < nRepeatTransmit; nRepeat++) {
+    for (const char* p = sCodeWord; *p; p++) {
+      if ((*p != '0')) {
+        this->transmit(protocol.one);
+		if (protocol.doubledBits) this->transmit(protocol.zero);
+      }
+      else {
+        this->transmit(protocol.zero);
+		if (protocol.doubledBits) this->transmit(protocol.one);
+      }
+    }
+    this->transmit(protocol.syncFactor);
+  }
+
+#if not defined( RCSwitchDisableReceiving )
+  // enable receiver again if we just disabled it
+  if (nReceiverInterrupt_backup != -1) {
+    this->enableReceive(nReceiverInterrupt_backup);
+  }
+#endif
 }
 
 /**
@@ -483,7 +574,7 @@ void RCSwitch::send(const char* sCodeWord) {
  * bits are sent from MSB to LSB, i.e., first the bit at position length-1,
  * then the bit at position length-2, and so on, till finally the bit at position 0.
  */
-void RCSwitch::send(unsigned long code, unsigned int length) {
+void RCSwitch::send(bit_value_t code, unsigned int length) {
   if (this->nTransmitterPin == -1)
     return;
 
@@ -497,10 +588,13 @@ void RCSwitch::send(unsigned long code, unsigned int length) {
 
   for (int nRepeat = 0; nRepeat < nRepeatTransmit; nRepeat++) {
     for (int i = length-1; i >= 0; i--) {
-      if (code & (1L << i))
+      if (code & (1L << i)){
         this->transmit(protocol.one);
-      else
+		if (protocol.doubledBits) this->transmit(protocol.zero);
+      }else{
         this->transmit(protocol.zero);
+		if (protocol.doubledBits) this->transmit(protocol.one);
+	  }
     }
     this->transmit(protocol.syncFactor);
   }
@@ -517,8 +611,8 @@ void RCSwitch::send(unsigned long code, unsigned int length) {
  * Transmit a single high-low pulse.
  */
 void RCSwitch::transmit(HighLow pulses) {
-  uint8_t firstLogicLevel = (this->protocol.invertedSignal) ? LOW : HIGH;
-  uint8_t secondLogicLevel = (this->protocol.invertedSignal) ? HIGH : LOW;
+  uint8_t firstLogicLevel = (this->protocol.firstDataTiming % 2) ? HIGH : LOW;
+  uint8_t secondLogicLevel = (this->protocol.firstDataTiming % 2) ? LOW : HIGH;
   
   digitalWrite(this->nTransmitterPin, firstLogicLevel);
   delayMicroseconds( this->protocol.pulseLength * pulses.high);
@@ -566,7 +660,7 @@ void RCSwitch::resetAvailable() {
   RCSwitch::nReceivedValue = 0;
 }
 
-unsigned long RCSwitch::getReceivedValue() {
+bit_value_t RCSwitch::getReceivedValue() {
   return RCSwitch::nReceivedValue;
 }
 
@@ -582,7 +676,7 @@ unsigned int RCSwitch::getReceivedProtocol() {
   return RCSwitch::nReceivedProtocol;
 }
 
-unsigned int* RCSwitch::getReceivedRawdata() {
+volatile unsigned int* RCSwitch::getReceivedRawdata() {
   return RCSwitch::timings;
 }
 
@@ -594,6 +688,7 @@ static inline unsigned int diff(int A, int B) {
 /**
  *
  */
+ 
 bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCount) {
 #ifdef ESP8266
     const Protocol &pro = proto[p-1];
@@ -602,11 +697,12 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
     memcpy_P(&pro, &proto[p-1], sizeof(Protocol));
 #endif
 
-    unsigned long code = 0;
+    bit_value_t code = 0;
     //Assuming the longer pulse length is the pulse captured in timings[0]
     const unsigned int syncLengthInPulses =  ((pro.syncFactor.low) > (pro.syncFactor.high)) ? (pro.syncFactor.low) : (pro.syncFactor.high);
-    const unsigned int delay = RCSwitch::timings[0] / syncLengthInPulses;
+    const unsigned int delay = RCSwitch::timings[pro.syncPulseTiming] / syncLengthInPulses;
     const unsigned int delayTolerance = delay * RCSwitch::nReceiveTolerance / 100;
+    
     
     /* For protocols that start low, the sync period looks like
      *               _________
@@ -625,26 +721,45 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
      *
      * The 2nd saved duration starts the data
      */
-    const unsigned int firstDataTiming = (pro.invertedSignal) ? (2) : (1);
 
-    for (unsigned int i = firstDataTiming; i < changeCount - 1; i += 2) {
-        code <<= 1;
-        if (diff(RCSwitch::timings[i], delay * pro.zero.high) < delayTolerance &&
-            diff(RCSwitch::timings[i + 1], delay * pro.zero.low) < delayTolerance) {
-            // zero
-        } else if (diff(RCSwitch::timings[i], delay * pro.one.high) < delayTolerance &&
-                   diff(RCSwitch::timings[i + 1], delay * pro.one.low) < delayTolerance) {
-            // one
-            code |= 1;
-        } else {
-            // Failed
-            return false;
-        }
-    }
+#define TIMING_MATCH(index, checkFor)  (diff(RCSwitch::timings[index], delay * checkFor) < delayTolerance)
+#define TIMING_IS_ZERO(index) (TIMING_MATCH(index, pro.zero.high) && TIMING_MATCH(index + 1, pro.zero.low))
+#define TIMING_IS_ONE(index) (TIMING_MATCH(index, pro.one.high) && TIMING_MATCH(index + 1, pro.one.low))
 
+	if (pro.doubledBits) {
+		for (unsigned int i = pro.firstDataTiming; i < changeCount - 1; i += 4) {
+			code <<= 1;
+			if (TIMING_IS_ZERO(i) &&  //i and i+1 is ZERO
+				TIMING_IS_ONE(i + 2) ) { // i+2 and i+3 is ONE
+				// --> zero
+			} else if (TIMING_IS_ONE(i) &&  //i and i+1 is ONE
+					   TIMING_IS_ZERO(i + 2)) { //i+2 and i+3 is ZERO
+				// --> one
+				code |= 1;
+			} else {
+				// Failed
+				return false;
+			}
+		}
+        RCSwitch::nReceivedBitlength = (changeCount - 1) / 4;
+	} else {
+		for (unsigned int i = pro.firstDataTiming; i < changeCount - 1; i += 2) {
+			code <<= 1;
+			if (TIMING_IS_ZERO(i)) {
+				// zero
+			} else if (TIMING_IS_ONE(i)) {
+				// one
+				code |= 1;
+			} else {
+				// Failed
+				return false;
+			}
+		}
+        RCSwitch::nReceivedBitlength = (changeCount - 1) / 2;
+	}
+	
     if (changeCount > 7) {    // ignore very short transmissions: no device sends them, so this must be noise
         RCSwitch::nReceivedValue = code;
-        RCSwitch::nReceivedBitlength = (changeCount - 1) / 2;
         RCSwitch::nReceivedDelay = delay;
         RCSwitch::nReceivedProtocol = p;
     }
@@ -654,9 +769,9 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
 
 void RECEIVE_ATTR RCSwitch::handleInterrupt() {
 
-  static unsigned int changeCount = 0;
-  static unsigned long lastTime = 0;
-  static unsigned int repeatCount = 0;
+  static volatile unsigned int changeCount = 0;
+  static volatile unsigned long lastTime = 0;
+  static volatile unsigned int repeatCount = 0;
 
   const long time = micros();
   const unsigned int duration = time - lastTime;
@@ -665,19 +780,23 @@ void RECEIVE_ATTR RCSwitch::handleInterrupt() {
     // A long stretch without signal level change occurred. This could
     // be the gap between two transmission.
     if (diff(duration, RCSwitch::timings[0]) < 200) {
+	//Serial.print("DUR ");Serial.print(duration);Serial.print("/");Serial.println(RCSwitch::timings[0]);
       // This long signal is close in length to the long signal which
       // started the previously recorded timings; this suggests that
       // it may indeed by a a gap between two transmissions (we assume
       // here that a sender will send the signal multiple times,
       // with roughly the same gap between them).
       repeatCount++;
+	  //Serial.print("RPT ");Serial.println(repeatCount);
       if (repeatCount == 2) {
         for(unsigned int i = 1; i <= numProto; i++) {
           if (receiveProtocol(i, changeCount)) {
+			//	Serial.print("PRO ");Serial.println(i);
             // receive succeeded for protocol i
             break;
           }
         }
+		//if(digitalRead(8)==LOW&&RCSwitch::nReceivedValue==0)RCSwitch::nReceivedValue=-1;
         repeatCount = 0;
       }
     }

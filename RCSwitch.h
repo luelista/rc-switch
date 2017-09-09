@@ -56,7 +56,8 @@
 
 // Number of maximum High/Low changes per packet.
 // We can handle up to (unsigned long) => 32 bit * 2 H/L changes per bit + 2 for sync
-#define RCSWITCH_MAX_CHANGES 67
+#define RCSWITCH_MAX_CHANGES 133
+typedef unsigned long bit_value_t;
 
 class RCSwitch {
 
@@ -73,9 +74,11 @@ class RCSwitch {
     void switchOff(const char* sGroup, const char* sDevice);
     void switchOn(char sGroup, int nDevice);
     void switchOff(char sGroup, int nDevice);
+    void switchOn(int remote, bool allSwitches, int nSwitchNumber);
+    void switchOff(int remote, bool allSwitches, int nSwitchNumber);
 
     void sendTriState(const char* sCodeWord);
-    void send(unsigned long code, unsigned int length);
+    void send(bit_value_t code, unsigned int length);
     void send(const char* sCodeWord);
     
     #if not defined( RCSwitchDisableReceiving )
@@ -85,11 +88,11 @@ class RCSwitch {
     bool available();
     void resetAvailable();
 
-    unsigned long getReceivedValue();
+    bit_value_t getReceivedValue();
     unsigned int getReceivedBitlength();
     unsigned int getReceivedDelay();
     unsigned int getReceivedProtocol();
-    unsigned int* getReceivedRawdata();
+    volatile unsigned int* getReceivedRawdata();
     #endif
   
     void enableTransmit(int nTransmitterPin);
@@ -110,8 +113,10 @@ class RCSwitch {
         HighLow syncFactor;
         HighLow zero;
         HighLow one;
-        /** @brief if true inverts the high and low logic levels in the HighLow structs */
-        bool invertedSignal;
+        /** @brief if firstDataTiming==2 inverts the high and low logic levels in the HighLow structs */
+        uint8_t firstDataTiming : 4;
+        uint8_t syncPulseTiming : 4;
+		bool doubledBits;
     };
 
     void setProtocol(Protocol protocol);
@@ -123,6 +128,7 @@ class RCSwitch {
     char* getCodeWordB(int nGroupNumber, int nSwitchNumber, bool bStatus);
     char* getCodeWordC(char sFamily, int nGroup, int nDevice, bool bStatus);
     char* getCodeWordD(char group, int nDevice, bool bStatus);
+    char* getCodeWordE(int remote, bool allSwitches, int nSwitchNumber, bool bStatus);
     void transmit(HighLow pulses);
 
     #if not defined( RCSwitchDisableReceiving )
@@ -136,16 +142,16 @@ class RCSwitch {
     Protocol protocol;
 
     #if not defined( RCSwitchDisableReceiving )
-    static int nReceiveTolerance;
-    static unsigned long nReceivedValue;
-    static unsigned int nReceivedBitlength;
-    static unsigned int nReceivedDelay;
-    static unsigned int nReceivedProtocol;
+    static volatile int nReceiveTolerance;
+    static volatile bit_value_t nReceivedValue;
+    static volatile unsigned int nReceivedBitlength;
+    static volatile unsigned int nReceivedDelay;
+    static volatile unsigned int nReceivedProtocol;
     const static unsigned int nSeparationLimit;
     /* 
      * timings[0] contains sync timing, followed by a number of bits
      */
-    static unsigned int timings[RCSWITCH_MAX_CHANGES];
+    static volatile unsigned int timings[RCSWITCH_MAX_CHANGES];
     #endif
 
     
